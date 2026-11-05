@@ -35,9 +35,10 @@ Hai phần phụ (không bắt buộc):
 ```bash
 brew install openfortivpn
 
-cd ~/tung/dotfiles/fvpn
+git clone git@github.com:tibuchivn/fvpn.git ~/tung/fvpn
+cd ~/tung/fvpn
 cp fvpn.local.example.sh fvpn.local.sh      # rồi sửa: VPN_USER, GATEWAY_DOMAIN, ...
-$EDITOR fvpn.local.sh
+$EDITOR fvpn.local.sh                       # đã gitignore, không commit
 
 bash fvpn-setup.sh
 ```
@@ -64,7 +65,7 @@ mật khẩu) và làm mới config, pin, binary.
 
 ```bash
 mkdir -p ~/bin
-ln -sf ~/tung/dotfiles/fvpn/fvpn-watch.sh ~/bin/fvpn-watch.sh
+ln -sf ~/tung/fvpn/fvpn-watch.sh ~/bin/fvpn-watch.sh
 cp ai.fvpn.watch.plist ~/Library/LaunchAgents/
 # sửa đường dẫn trong plist nếu home khác
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.fvpn.watch.plist

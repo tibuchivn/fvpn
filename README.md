@@ -37,9 +37,10 @@ Two optional extras:
 ```bash
 brew install openfortivpn
 
-cd ~/tung/dotfiles/fvpn
+git clone git@github.com:tibuchivn/fvpn.git ~/tung/fvpn
+cd ~/tung/fvpn
 cp fvpn.local.example.sh fvpn.local.sh      # then edit: VPN_USER, GATEWAY_DOMAIN, ...
-$EDITOR fvpn.local.sh
+$EDITOR fvpn.local.sh                       # gitignored, never committed
 
 bash fvpn-setup.sh
 ```
@@ -67,7 +68,7 @@ the stored password) and refreshes configs, pins and the pinned binary.
 
 ```bash
 mkdir -p ~/bin
-ln -sf ~/tung/dotfiles/fvpn/fvpn-watch.sh ~/bin/fvpn-watch.sh
+ln -sf ~/tung/fvpn/fvpn-watch.sh ~/bin/fvpn-watch.sh
 cp ai.fvpn.watch.plist ~/Library/LaunchAgents/
 # adjust the ProgramArguments path inside the plist if your home differs
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.fvpn.watch.plist

@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-time setup: unattended openfortivpn for the 4 Internet Brands SSL VPN gateways.
-# Run it yourself in a Terminal window: bash ~/tung/dotfiles/fvpn/fvpn-setup.sh
+# Run it yourself in a Terminal window: bash ~/tung/fvpn/fvpn-setup.sh
 #
 # Design points, each answering a known failure mode:
 #   * The VPN password lives in the login keychain, typed straight into security(1)'s
