@@ -203,3 +203,7 @@ sudo rm -f /etc/sudoers.d/fvpn /usr/local/bin/fvpn /usr/local/sbin/fvpn-root \
 sudo rm -rf /usr/local/libexec/fvpn /usr/local/etc/openfortivpn
 security delete-generic-password -s "${KEYCHAIN_ITEM:-fvpn-vpn-password}"
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
