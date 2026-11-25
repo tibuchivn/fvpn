@@ -414,12 +414,48 @@ if [ "$action" = up ] || [ "$action" = manual ]; then
 fi
 
 gw_pids() { /usr/bin/pgrep -f "openfortivpn .*${CONF}" || true; }
-tun_pid()  { /usr/bin/pgrep -f "pppd .*${CONF}" || true; }
-any_gw()   { /usr/bin/pgrep -f "openfortivpn .*${CONFDIR}/" || true; }
-any_tun()  { /usr/bin/pgrep -f "pppd .*${CONFDIR}/" || true; }
+any_gw()  { /usr/bin/pgrep -f "openfortivpn .*${CONFDIR}/" || true; }
+tun_of()  {   # pppd children of the given openfortivpn pids
+  local pid out=""
+  for pid in $1; do out="$out $(/usr/bin/pgrep -P "$pid" 2>/dev/null || true)"; done
+  echo $out
+}
+peer_pid() {  # pppd still attached to this tunnel's peer address (orphan after a hard kill)
+  local peer
+  peer=$(/sbin/ifconfig ppp0 2>/dev/null \
+    | /usr/bin/awk '/inet /{for(i=1;i<=NF;i++) if ($i=="-->"){print $(i+1); exit}}')
+  [ -n "$peer" ] || return 0
+  /usr/bin/pgrep -f "pppd .*:${peer//./\\.}" || true
+}
+# pppd carries neither the config path nor a gateway name in its argv (it gets the pty
+# number and "<local>:<remote>"), so matching "pppd .*<conf>" never found anything and
+# the orphan-pppd clean-up below was dead code. Ask the process tree instead.
+tun_pid() {
+  local t
+  t=$(tun_of "$(gw_pids)"); [ -n "$t" ] || t=$(tun_of "$(any_gw)")
+  [ -n "$t" ] || t=$(peer_pid)
+  echo $t
+}
+
+tunnel_up() { /sbin/ifconfig ppp0 2>/dev/null | /usr/bin/grep -q 'inet '; }
+alive()     { local pid; for pid in "$@"; do /bin/kill -0 "$pid" 2>/dev/null && return 0; done; return 1; }
+wait_gone() {  # wait_gone <half-seconds> <pid>... ; succeeds once none of them is left
+  local n=$1 i=0; shift
+  while [ $i -lt "$n" ]; do i=$((i+1)); /bin/sleep 0.5; alive "$@" || return 0; done
+  ! alive "$@"
+}
+connecting() {  # another `fvpn up` is still inside its FortiToken approval window
+  local a g ts dl r
+  [ -r "$INTENT" ] || return 1
+  read -r a g ts dl r < "$INTENT" 2>/dev/null || return 1
+  [ "$a" = up ] || return 1
+  [ "${r:-}" = ok ] && return 1
+  case "${dl:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(/bin/date +%s)" -le "$dl" ]
+}
 
 show_status() {
-  if /sbin/ifconfig ppp0 2>/dev/null | /usr/bin/grep -q 'inet '; then
+  if tunnel_up; then
     echo "connected  ip=$(/sbin/ifconfig ppp0 | /usr/bin/awk '/inet /{print $2; exit}')"
     /usr/sbin/netstat -rn -f inet 2>/dev/null | /usr/bin/awk '$1=="default"{print "default -> "$NF; exit}'
     /usr/sbin/scutil --dns 2>/dev/null | /usr/bin/awk '/nameserver\[0\]/{print "dns "$3; exit}'
@@ -434,7 +470,34 @@ case "$action" in
     case "$wait_s" in ''|*[!0-9]*) echo "seconds must be a number" >&2; exit 2 ;; esac
     [ "$wait_s" -ge 15 ] && [ "$wait_s" -le 900 ] || { echo "seconds must be 15..900" >&2; exit 2; }
     p=$(gw_pids)
-    if [ -n "$p" ]; then echo "already running pid=$p"; show_status; exit 0; fi
+    if [ -n "$p" ] && tunnel_up; then
+      # our gateway process and ppp0: nothing to do, and this really is success
+      echo "already connected pid=$p"
+      show_status; exit 0
+    fi
+    if [ -n "$p" ]; then
+      # The gateway process exists but ppp0 does not. Either another `fvpn up` is still
+      # waiting for the FortiToken approval, or the previous tunnel is still shutting
+      # down (openfortivpn needs up to a minute to exit after SIGTERM). Only the second
+      # case may be cleaned up - and cleaning up must never be reported as success: that
+      # is what made `up` print "already running pid=..." and leave the user with no
+      # tunnel while returning exit 0.
+      if connecting; then
+        echo "ERROR: an earlier 'fvpn up' is still in progress (pid=$p): approve the FortiToken push, or run: fvpn down" >&2
+        exit 1
+      fi
+      echo "previous tunnel (pid=$p) is still shutting down; waiting for it before reconnecting" >&2
+      t=$(tun_pid)
+      # Wait, send nothing: `down` has already signalled this process, and a second
+      # SIGTERM could re-enter openfortivpn's clean-up (route restore included). SIGKILL
+      # is worse - it can cut the restore short and leave the host with no default route.
+      # If it is still there after 60s the user is told to run `fvpn down`, which escalates.
+      if ! wait_gone 120 $p; then
+        echo "ERROR: pid $p is still there after 60s (see $LOG); retry, or run: fvpn down" >&2
+        exit 1
+      fi
+      [ -n "$t" ] && { /bin/kill $t 2>/dev/null || true; wait_gone 20 $t || true; }
+    fi
     if /sbin/ifconfig ppp0 >/dev/null 2>&1; then
       echo "ERROR: ppp0 already exists (FortiClient or another tunnel is up); disconnect it first" >&2
       exit 1
@@ -484,12 +547,16 @@ case "$action" in
     echo "ERROR: no tunnel after ${wait_s}s - FortiToken push not approved, or the login was rejected. Last log lines ($LOG):" >&2
     /usr/bin/tail -n 10 "$LOG" >&2 2>/dev/null || true
     # never leave an orphan behind: it would hold ppp0 and block the next up
-    /bin/kill "$ofp_pid" 2>/dev/null || true
-    /bin/sleep 1
-    p=$(gw_pids)
-    [ -n "$p" ] && /bin/kill $p 2>/dev/null || true
     t=$(tun_pid)
-    [ -n "$t" ] && /bin/kill $t 2>/dev/null || true
+    /bin/kill "$ofp_pid" 2>/dev/null || true
+    if ! wait_gone 120 "$ofp_pid"; then
+      echo "WARNING: pid $ofp_pid ignored SIGTERM for 60s (see $LOG); sending SIGKILL" >&2
+      /bin/kill -9 "$ofp_pid" 2>/dev/null || true
+      wait_gone 10 "$ofp_pid" || echo "WARNING: pid $ofp_pid survived SIGKILL" >&2
+    fi
+    p=$(gw_pids)
+    [ -n "$p" ] && { /bin/kill $p 2>/dev/null || true; wait_gone 20 $p || true; }
+    [ -n "$t" ] && { /bin/kill $t 2>/dev/null || true; wait_gone 20 $t || true; }
     exit 1
     ;;
   down)
@@ -498,22 +565,43 @@ case "$action" in
     printf 'down - %s\n' "$(/bin/date +%s)" > "$INTENT" 2>/dev/null || true
     /bin/chmod 644 "$INTENT" 2>/dev/null || true
     if [ -n "$name" ]; then
-      p=$(gw_pids); t=$(tun_pid); label="$name"
+      p=$(gw_pids); label="$name"
     else
-      p=$(any_gw); t=$(any_tun); label="tunnel"
+      p=$(any_gw); label="tunnel"
     fi
-    if [ -z "$p" ]; then echo "not running"; show_status; exit 0; fi
+    if [ -z "$p" ]; then
+      # no gateway process to stop - but a stray pppd can still be holding ppp0
+      t=$(peer_pid)
+      if [ -n "$t" ]; then
+        echo "orphan pppd pid=$t is holding ppp0; stopping it" >&2
+        /bin/kill $t 2>/dev/null || true
+        wait_gone 20 $t || { echo "ERROR: orphan pppd $t survived SIGTERM" >&2; exit 1; }
+      fi
+      echo "not running"; show_status; exit 0
+    fi
+    t=$(tun_pid)
     /bin/kill $p 2>/dev/null || true
-    i=0
-    while [ $i -lt 20 ]; do
-      i=$((i+1)); /bin/sleep 0.5
-      /bin/kill -0 $p 2>/dev/null || break
-    done
-    [ -n "$t" ] && /bin/kill $t 2>/dev/null || true
+    # openfortivpn needs up to a minute to finish its own teardown (threads, pppd, the
+    # gateway logout). Reporting "down" after a fixed 10s left a live process behind, and
+    # the next `up` found it and printed "already running" while nothing was connected.
+    escalated=0
+    if ! wait_gone 120 $p; then
+      echo "tunnel ignored SIGTERM for 60s, sending SIGKILL to pid $p" >&2
+      /bin/kill -9 $p 2>/dev/null || true
+      escalated=1
+      wait_gone 10 $p || echo "ERROR: pid $p survived SIGKILL" >&2
+    fi
+    [ -n "$t" ] && { /bin/kill $t 2>/dev/null || true; wait_gone 20 $t || true; }
     echo "$label: down"; show_status
     # if ppp0 survives, say so instead of pretending it worked
     if /sbin/ifconfig ppp0 >/dev/null 2>&1; then
       echo "WARNING: ppp0 still exists; check for another VPN client holding it" >&2
+      exit 1
+    fi
+    # a SIGKILL during openfortivpn's route restore can leave the host with no default route
+    if [ "$escalated" = 1 ] \
+       && ! /usr/sbin/netstat -rn -f inet 2>/dev/null | /usr/bin/awk '$1=="default"{f=1} END{exit !f}'; then
+      echo "WARNING: no default route left - restore it with: sudo route add default \$(ipconfig getoption en0 router)" >&2
       exit 1
     fi
     ;;

@@ -133,6 +133,9 @@ fvpn logs asia1 40
 | `missing config … (re-run setup)` | gateway chưa cài: thêm profile trong FortiClient rồi chạy lại setup |
 | tunnel chết đúng một ngày cố định mỗi năm | cert gateway đã renew, digest pinned không còn khớp — chạy lại setup |
 | `ERROR: ppp0 already exists` | FortiClient (hoặc tunnel khác) đang bật: `fvpn down` trước |
+| `previous tunnel … is still shutting down` | lần `fvpn up` trước vừa thoát và openfortivpn còn đang dọn dẹp (có thể tới ~1 phút); `up` sẽ chờ chứ không kết nối chồng lên |
+| `ERROR: pid … is still there after 60s` | tiến trình đó không chịu thoát: chạy `fvpn down` (có escalate SIGKILL) rồi `fvpn up` lại |
+| `fvpn up` im lặng, như không làm gì | không còn: `up` giờ trả exit code khác 0 khi không kết nối được — xem `fvpn status` và `fvpn logs <gateway> 40` |
 | không thấy notification | bật quyền cho *Script Editor*, xem `~/Library/Logs/fvpn-watch.log` |
 
 Log: `/var/log/fvpn-<gateway>.log` (openfortivpn), `/var/log/fvpn-pinentry.log` (nó hỏi

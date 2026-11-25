@@ -138,6 +138,9 @@ fvpn logs asia1 40
 | `missing config … (re-run setup)` | gateway not installed: add the profile in FortiClient and re-run the setup |
 | tunnel stops working on a fixed date each year | the gateway certificate was renewed and the pinned digest no longer matches — re-run the setup |
 | `ERROR: ppp0 already exists` | FortiClient (or another tunnel) is up: `fvpn down` first |
+| `previous tunnel … is still shutting down` | an earlier `fvpn up` exited and openfortivpn is still tearing down (it can take ~1 minute); `up` waits instead of connecting over it |
+| `ERROR: pid … is still there after 60s` | that teardown never finished: `fvpn down` (it escalates to SIGKILL), then `fvpn up` again |
+| `fvpn up` is silent or seems to do nothing | it never is: `up` now exits non-zero when it could not connect — check `fvpn status` and `fvpn logs <gateway> 40` |
 | notifications never appear | allow notifications for *Script Editor*, and check `~/Library/Logs/fvpn-watch.log` |
 
 Logs: `/var/log/fvpn-<gateway>.log` (openfortivpn), `/var/log/fvpn-pinentry.log`

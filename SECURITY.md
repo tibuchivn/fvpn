@@ -361,6 +361,8 @@ so that future maintainers do not reintroduce them.
 | 9 | `sed -i '' "s|__OWNER__|$ME|"` could be corrupted by `&` or `|` in the username. | `perl -pi -e 's/__OWNER__/$ENV{FVPN_OWNER}/g'` with the owner passed via environment. |
 | 10 | Self-test only checked for a `D` line, not the full Assuan dialogue. | Test the full `SETTITLE/SETRESC/SETKEYINFO/SETPROMPT/GETPIN` sequence and require 5×`OK` + 1×`D`. |
 | 11 | `fvpn-pinentry` was suspected of missing a trailing `OK` after `D`. | Verified against `openfortivpn`'s `src/userinput.c:pinentry_read`: it reads exactly one line per exchange and does not use libassuan. No `OK` is correct; adding one would write to a closed pipe. |
+| 12 | `tun_pid`/`any_tun` matched `pppd .*<conf>`, but pppd's argv carries only the pty number and `<local>:<remote>` — the orphan-pppd clean-up in `up`/`down` never ran. | Match pppd as a child of the `openfortivpn` pid (`pgrep -P`), falling back to the pppd attached to the `ppp0` peer address. |
+| 13 | `down` reported success after a fixed 10s while `openfortivpn` was still exiting (it needs up to a minute), and `up` then found that process and printed `already running pid=…`, exiting 0 with no tunnel. Scripts and the watcher read that as "connected". | `down` waits for the process, escalating to `SIGKILL` after 60s; `up` tells a live tunnel (`already connected`) from a teardown (`previous tunnel … still shutting down`, waits for it) from another `up` still awaiting approval (exit 1) and never reports success without a tunnel. |
 
 ---
 
